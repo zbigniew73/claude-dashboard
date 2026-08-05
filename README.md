@@ -87,9 +87,22 @@ lista sesji w tym panelu pokazuje **tylko ID sesji i czas ostatniej
 modyfikacji** (bezpieczne metadane pliku) — nie tytuł ani podsumowanie
 rozmowy, bo to wymagałoby czytania wnętrza pliku wbrew tej rekomendacji.
 
-Wymagania: `claude` CLI musi być zainstalowane i w `PATH` konta, na którym
+Wymagania: `claude` CLI musi być zainstalowane i widoczne dla konta, na którym
 działa panel. xterm.js jest ładowany z CDN (`cdn.jsdelivr.net`) — przeglądarka
 użytkownika musi mieć do niego dostęp.
+
+**Uruchamiasz jako usługę systemd? Ustaw `CLAUDE_BIN`.** systemd daje procesowi
+minimalny `PATH` (`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin`), w którym
+**nie ma `~/.local/bin`** — a tam domyślnie ląduje oficjalny instalator Claude
+Code. Bez tego terminal CLI kończy się błędem `execvp(3) failed.: No such file
+or directory`. Sprawdź ścieżkę przez `which claude` i wpisz ją do `.env`:
+
+```
+CLAUDE_BIN=/home/twoj-user/.local/bin/claude
+```
+
+(Przy starcie przez `npm start` z własnej powłoki nie jest to potrzebne —
+panel znajdzie `claude` w `PATH` sam.)
 
 ## Trzy tryby pracy
 

@@ -1,4 +1,7 @@
 import pty from 'node-pty';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 import { verifySessionToken, SESSION_COOKIE } from './auth.js';
 
 function parseCookies(header) {
@@ -29,6 +32,35 @@ function buildClaudeArgs(mode, sessionId) {
   return []; // 'new' - zwykle `claude` startuje swiezy interaktywny sesje
 }
 
+function isExecutableFile(candidate) {
+  try {
+    fs.accessSync(candidate, fs.constants.X_OK);
+    return fs.statSync(candidate).isFile();
+  } catch {
+    return false;
+  }
+}
+
+// Szukamy binarki `claude` sami, zamiast liczyc na to ze execvp znajdzie ja
+// w PATH. Powod: pod systemd proces dostaje minimalny PATH (bez ~/.local/bin,
+// gdzie instalator Claude Code laduje domyslnie), wiec spawn konczyl sie
+// surowym `execvp(3) failed.: No such file or directory` wypisanym wprost
+// do terminala - blad leci w rozwidlonym procesie potomnym, wiec try/catch
+// wokol pty.spawn go nie lapie. Sprawdzenie przed startem daje czytelny
+// komunikat zamiast tego.
+function resolveClaudeBin() {
+  const explicit = (process.env.CLAUDE_BIN || '').trim();
+  if (explicit) return isExecutableFile(explicit) ? explicit : null;
+
+  const candidates = (process.env.PATH || '')
+    .split(path.delimiter)
+    .filter(Boolean)
+    .map((dir) => path.join(dir, 'claude'));
+  candidates.push(path.join(os.homedir(), '.local', 'bin', 'claude'));
+
+  return candidates.find(isExecutableFile) || null;
+}
+
 function attachCliWebSocket(wss) {
   wss.on('connection', (ws, req) => {
     const url = new URL(req.url, 'http://localhost');
@@ -42,9 +74,19 @@ function attachCliWebSocket(wss) {
       return;
     }
 
+    const claudeBin = resolveClaudeBin();
+    if (!claudeBin) {
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: "Nie znaleziono programu 'claude'. Ustaw CLAUDE_BIN w .env na pelna sciezke (np. /home/user/.local/bin/claude) - pod systemd PATH nie zawiera ~/.local/bin."
+      }));
+      ws.close();
+      return;
+    }
+
     let shell;
     try {
-      shell = pty.spawn('claude', buildClaudeArgs(mode, sessionId), {
+      shell = pty.spawn(claudeBin, buildClaudeArgs(mode, sessionId), {
         name: 'xterm-256color',
         cols: 80,
         rows: 24,
