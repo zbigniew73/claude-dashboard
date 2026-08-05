@@ -8,7 +8,7 @@ const require = createRequire(import.meta.url);
 const pam = require('authenticate-pam');
 
 const SESSION_COOKIE = 'cx_session';
-const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12h
+const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
 function getSecret() {
   const secret = process.env.SESSION_SECRET;
@@ -43,6 +43,9 @@ function verify(token) {
     const payload = JSON.parse(Buffer.from(data, 'base64url').toString('utf-8'));
     if (!payload.exp || Date.now() > payload.exp) return null;
 
+    const allowed = getAllowedUsers();
+    if (allowed.length > 0 && !allowed.includes(payload.username)) return null;
+
     return payload;
   } catch {
     return null;
@@ -56,22 +59,10 @@ function getAllowedUsers() {
     .filter(Boolean);
 }
 
-// Logowanie systemowe przez PAM (jak `login`/`sshd`) - dziala tylko dla kont
-// wymienionych w AUTH_USERS. To jest CELOWA whitelist, nie tylko wygoda:
-// bez niej kazdy poprawny login+haslo systemowe na serwerze dawalby dostep
-// do panelu, a chcemy dopuszczac tylko konkretne, wybrane konta.
-//
-// WYMAGANIA PO STRONIE SYSTEMU (patrz README):
-// - proces node musi byc rootem albo czlonkiem grupy `shadow` - inaczej PAM
-//   (a dokladnie pomocniczy binarny unix_chkpwd) pozwoli sprawdzic TYLKO
-//   haslo wlasnego uzytkownika procesu, nie dowolnego konta z whitelisty.
 function authenticateSystemUser(username, password) {
   return new Promise((resolve) => {
     const allowed = getAllowedUsers();
     if (!username || !allowed.includes(username)) {
-      // Odrzucamy PRZED wywolaniem PAM - whitelist nie sluzy tylko ladowi,
-      // ale i temu, zeby panel nie dzialal jako oracle do zgadywania hasel
-      // dowolnych kont systemowych, tylko tych jawnie dopuszczonych.
       resolve(false);
       return;
     }
@@ -83,10 +74,6 @@ function authenticateSystemUser(username, password) {
 
 function issueSessionCookie(res, username) {
   const token = sign({ username, exp: Date.now() + SESSION_TTL_MS });
-  // 'secure' (cookie tylko po HTTPS) wlaczamy jedynie w trybie world, gdzie
-  // przegladarka zawsze rozmawia z Caddy po HTTPS. W trybie lan polaczenie
-  // czesto jest zwyklym http:// w obrebie sieci lokalnej - tam 'secure' by
-  // uniemozliwilo zapisanie ciasteczka w ogole.
   const secure = (process.env.EXPOSURE || 'local') === 'world';
   res.cookie(SESSION_COOKIE, token, {
     httpOnly: true,
@@ -97,6 +84,20 @@ function issueSessionCookie(res, username) {
   });
 }
 
+function isSameOrigin(req) {
+  const origin = req.headers?.origin;
+  if (!origin) return true;
+
+  const allowed = (process.env.ALLOWED_ORIGIN || '').trim();
+  if (allowed && origin === allowed) return true;
+
+  try {
+    return new URL(origin).host === req.headers.host;
+  } catch {
+    return false;
+  }
+}
+
 function clearSessionCookie(res) {
   res.clearCookie(SESSION_COOKIE, { path: '/' });
 }
@@ -105,11 +106,6 @@ function verifySessionToken(token) {
   return verify(token);
 }
 
-// UWAGA: ta funkcja NIE zgaduje "czy to lokalne polaczenie" na podstawie req.ip.
-// Za reverse proxy (tryb world) kazde polaczenie - takze z internetu - dociera
-// do node'a jako 127.0.0.1, wiec taka heurystyka bylaby dziurawa. Decyzja "czy
-// w ogole wymagac logowania" zapada raz, przy starcie serwera (patrz index.js),
-// na podstawie jawnego EXPOSURE, a nie per-request.
 function requireAuth(req, res, next) {
   const token = req.cookies?.[SESSION_COOKIE];
   if (!token) return res.status(401).json({ error: 'Brak sesji - zaloguj sie' });
@@ -124,6 +120,7 @@ function requireAuth(req, res, next) {
 export {
   authenticateSystemUser,
   getAllowedUsers,
+  isSameOrigin,
   issueSessionCookie,
   clearSessionCookie,
   verifySessionToken,

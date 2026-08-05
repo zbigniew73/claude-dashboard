@@ -8,7 +8,7 @@ import { WebSocketServer } from 'ws';
 import { fileURLToPath } from 'url';
 import authRoutes from './routes/auth.js';
 import apiRoutes from './routes/api.js';
-import { requireAuth, getAllowedUsers } from './services/auth.js';
+import { requireAuth, getAllowedUsers, isSameOrigin } from './services/auth.js';
 import { attachCliWebSocket, authenticateUpgrade } from './services/pty-bridge.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -19,8 +19,6 @@ const PORT = parseInt(process.env.PORT || '4200', 10);
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN;
 const EXPOSURE = process.env.EXPOSURE || 'local'; // local | lan | world
 
-// --- walidacja spojnosci EXPOSURE <-> HOST - zamiast zgadywac tryb z adresu,
-// wymagamy jawnej deklaracji i sprawdzamy, czy HOST do niej pasuje ---
 const isLoopbackHost = HOST === '127.0.0.1' || HOST === 'localhost';
 
 if (!['local', 'lan', 'world'].includes(EXPOSURE)) {
@@ -53,12 +51,8 @@ if (EXPOSURE === 'world' && !isLoopbackHost) {
   process.exit(1);
 }
 
-// Logowanie jest teraz oparte o konta systemowe (PAM) - patrz server/services/auth.js.
-// AUTH_USERS to whitelist dozwolonych loginow systemowych (1 lub kilka, oddzielone przecinkiem).
 const allowedUsers = getAllowedUsers();
 
-// Autoryzacja obowiazkowa w kazdym trybie poza czysto lokalnym (local = dostep
-// wylacznie z tej samej maszyny, gwarantowany samym bindem na 127.0.0.1).
 const authRequired = EXPOSURE !== 'local' || allowedUsers.length > 0;
 
 if (authRequired) {
@@ -79,9 +73,6 @@ if (authRequired) {
 
 const app = express();
 
-// CORS: brak wildcardow. Frontend i API sa serwowane z tego samego originu
-// (bezposrednio albo przez Caddy), wiec CORS w tej architekturze i tak
-// praktycznie nie wchodzi w gre - to tylko dodatkowa warstwa.
 app.use(
   cors({
     origin: ALLOWED_ORIGIN || false,
@@ -89,19 +80,62 @@ app.use(
   })
 );
 
+if (EXPOSURE === 'world') {
+  app.set('trust proxy', 1);
+}
+
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
 
+app.use((req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
+  if (!isSameOrigin(req)) {
+    return res.status(403).json({ error: 'Zadanie z obcego originu zostalo odrzucone' });
+  }
+  next();
+});
+
 app.use('/api/auth', authRoutes);
 app.use('/api', authRequired ? requireAuth : (req, res, next) => next(), apiRoutes);
+
+app.use((req, res, next) => {
+  res.setHeader(
+    'Content-Security-Policy',
+    [
+      "default-src 'self'",
+      "script-src 'self'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data:",
+      "font-src 'self'",
+      "connect-src 'self' ws: wss:",
+      "frame-ancestors 'none'",
+      "base-uri 'none'",
+      "form-action 'none'",
+      "object-src 'none'"
+    ].join('; ')
+  );
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  next();
+});
+
+const XTERM_FILES = {
+  '/vendor/xterm.js': '@xterm/xterm/lib/xterm.js',
+  '/vendor/xterm.css': '@xterm/xterm/css/xterm.css',
+  '/vendor/addon-fit.js': '@xterm/addon-fit/lib/addon-fit.js'
+};
+for (const [route, modulePath] of Object.entries(XTERM_FILES)) {
+  app.get(route, (req, res) => {
+    res.sendFile(path.join(__dirname, '../node_modules', modulePath));
+  });
+}
 
 app.use(express.static(path.join(__dirname, '../web')));
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../web/index.html'));
 });
 
-// http.createServer + WebSocketServer (noServer) zamiast app.listen(), zeby
-// obsluzyc upgrade polaczenia na /ws/cli (terminal CLI) na tym samym porcie.
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 attachCliWebSocket(wss);
@@ -112,9 +146,6 @@ server.on('upgrade', (req, socket, head) => {
     socket.destroy();
     return;
   }
-  // Odrzucamy BRAK autoryzacji na poziomie HTTP, przed dokonczeniem handshake
-  // WebSocketa - dzieki temu nieautoryzowane polaczenie nigdy nie dostaje
-  // nawet chwilowego stanu "open" po stronie klienta.
   if (!authenticateUpgrade(req)) {
     socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
     socket.destroy();

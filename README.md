@@ -50,6 +50,17 @@ konto systemowe ma poprawne hasło.
 AUTH_USERS=adam,ania
 ```
 
+**Co dokładnie oddajesz, wpisując kogoś do `AUTH_USERS`.** Nie sam „dostęp do
+panelu" — pełną kontrolę nad **kontem, na którym działa usługa** (`User=`
+w pliku systemd). Wynika to z trzech funkcji panelu, każdej z osobna:
+zakładka Cron zapisuje crontab tego konta, zakładka CLI uruchamia na nim
+`claude` (który ma narzędzie bash), a zakładka Hooki zapisuje polecenia, które
+Claude Code później wykonuje. Traktuj tę listę jak listę osób, którym dajesz
+shell na koncie usługi — bo funkcjonalnie tym właśnie jest.
+
+Praktyczny wniosek: uruchamiaj panel na **dedykowanym koncie o minimalnych
+uprawnieniach**, a nie na koncie, na którym trzymasz coś wartościowego.
+
 **Wymóg systemowy — grupa `shadow`:** PAM (a dokładnie pomocniczy program
 `unix_chkpwd`) z założenia pozwala procesowi bez uprawnień sprawdzić hasło
 **tylko własnego użytkownika**. Żeby panel mógł logować konta z whitelisty
@@ -63,6 +74,14 @@ sudo usermod -aG shadow twoj-user-uslugi
 (To sprawdziłem eksperymentalnie: bez członkostwa w `shadow` logowanie
 działa tylko dla samego siebie, a próba zalogowania innego konta z whitelisty
 kończy się błędem uwierzytelniania mimo poprawnego hasła.)
+
+⚠️ **Dodawaj `shadow` tylko jeśli naprawdę tego potrzebujesz.** Członkostwo
+w tej grupie pozwala odczytać `/etc/shadow`, a — jak wyżej — każdy użytkownik
+z `AUTH_USERS` ma dostęp do powłoki na koncie usługi. Czyli: dodając `shadow`,
+dajesz wszystkim z whitelisty możliwość wyniesienia hashy haseł **wszystkich**
+kont systemowych do łamania offline. Jeśli `AUTH_USERS` zawiera tylko to samo
+konto, na którym działa usługa (najczęstszy przypadek — panel jednoosobowy),
+grupa `shadow` jest **niepotrzebna**: PAM i tak pozwala sprawdzić własne hasło.
 
 ## Cron
 
@@ -88,8 +107,9 @@ modyfikacji** (bezpieczne metadane pliku) — nie tytuł ani podsumowanie
 rozmowy, bo to wymagałoby czytania wnętrza pliku wbrew tej rekomendacji.
 
 Wymagania: `claude` CLI musi być zainstalowane i widoczne dla konta, na którym
-działa panel. xterm.js jest ładowany z CDN (`cdn.jsdelivr.net`) — przeglądarka
-użytkownika musi mieć do niego dostęp.
+działa panel. xterm.js jest zależnością npm serwowaną lokalnie przez panel —
+panel nie wymaga od przeglądarki dostępu do internetu i działa w sieci
+odciętej od świata.
 
 **Uruchamiasz jako usługę systemd? Ustaw `CLAUDE_BIN`.** systemd daje procesowi
 minimalny `PATH` (`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin`), w którym
@@ -110,11 +130,24 @@ Panel ma trzy jawne tryby (`EXPOSURE` w `.env`) — serwer **odmawia startu**,
 jeśli `EXPOSURE` i `HOST` do siebie nie pasują, żeby nie dało się przypadkiem
 wystawić czegoś bez autoryzacji.
 
-| EXPOSURE | HOST | Logowanie | Kiedy używać |
-|---|---|---|---|
-| `local` | musi być `127.0.0.1` | opcjonalne | tylko na tej maszynie |
-| `lan` | musi być Twoim realnym adresem LAN (np. `192.168.1.100`) | **wymagane** | dostęp z innych urządzeń w domu/biurze, bez domeny |
-| `world` | musi być `127.0.0.1` | **wymagane** | dostęp z internetu przez Twoją domenę, przez Caddy |
+| EXPOSURE | HOST | Logowanie | Szyfrowanie | Kiedy używać |
+|---|---|---|---|---|
+| `local` | musi być `127.0.0.1` | opcjonalne | nie dotyczy (brak ruchu w sieci) | tylko na tej maszynie |
+| `lan` | musi być Twoim realnym adresem LAN (np. `192.168.1.100`) | **wymagane** | ⚠️ **brak — czysty HTTP** | dostęp z innych urządzeń w domu/biurze, bez domeny |
+| `world` | musi być `127.0.0.1` | **wymagane** | ✅ HTTPS (TLS od Caddy) | dostęp z internetu przez Twoją domenę, przez Caddy |
+
+⚠️ **Tryb `lan` nie szyfruje ruchu.** Panel jest wtedy serwowany po zwykłym
+`http://`, więc przez sieć lokalną idą otwartym tekstem: hasło systemowe przy
+logowaniu, ciasteczko sesji przy każdym żądaniu i cała zawartość terminala CLI.
+Ktokolwiek w tej samej sieci — także zhakowane urządzenie IoT albo ktoś na
+tym samym Wi-Fi — może je podsłuchać lub wstrzyknąć własny kod do panelu.
+Dlatego ciasteczko sesji nie ma flagi `secure` w tym trybie (z nią przeglądarka
+w ogóle by go nie zapisała po HTTP).
+
+Używaj `lan` tylko w sieci, której ufasz w całości. Jeśli w sieci są urządzenia,
+którym nie ufasz, wybierz `world` z Caddy i TLS — Caddy może wystawiać panel
+także pod adresem LAN, więc nie musisz mieć publicznej domeny, żeby mieć
+szyfrowanie.
 
 ## Szybki start (tryb LAN — sieć lokalna)
 

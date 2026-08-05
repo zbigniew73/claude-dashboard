@@ -8,12 +8,14 @@
     "start": "node server/index.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "authenticate-pam": "^1.0.5",
+    "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
+    "express": "^4.19.2",
     "fs-extra": "^11.2.0",
-    "cookie-parser": "^1.4.6",
-    "authenticate-pam": "^1.0.5",
     "node-pty": "^1.0.0",
     "ws": "^8.18.0"
   },

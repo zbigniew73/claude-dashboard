@@ -2,7 +2,8 @@ import pty from 'node-pty';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { verifySessionToken, SESSION_COOKIE } from './auth.js';
+import { verifySessionToken, SESSION_COOKIE, isSameOrigin } from './auth.js';
+import { listCliSessions } from './cli-sessions.js';
 
 function parseCookies(header) {
   const out = {};
@@ -14,11 +15,9 @@ function parseCookies(header) {
   return out;
 }
 
-// Autoryzacja handshake WebSocketa - to ODDZIELNA sciezka od requireAuth
-// (middleware Express dziala tylko na zwyklych requestach HTTP, nie na
-// upgrade polaczenia WS), wiec sesje sprawdzamy tu recznie z tego samego
-// podpisywanego ciasteczka.
 function authenticateUpgrade(req) {
+  if (!isSameOrigin(req)) return false;
+
   const authRequired = Boolean((process.env.AUTH_USERS || '').trim());
   if (!authRequired) return true;
   const cookies = parseCookies(req.headers.cookie);
@@ -29,7 +28,23 @@ function authenticateUpgrade(req) {
 
 function buildClaudeArgs(mode, sessionId) {
   if (mode === 'resume' && sessionId) return ['--resume', sessionId];
-  return []; // 'new' - zwykle `claude` startuje swiezy interaktywny sesje
+  return [];
+}
+
+const PANEL_ONLY_ENV = [
+  'SESSION_SECRET',
+  'AUTH_USERS',
+  'PAM_SERVICE',
+  'ALLOWED_ORIGIN',
+  'EXPOSURE',
+  'HOST',
+  'PORT'
+];
+
+function childEnv() {
+  const env = { ...process.env };
+  for (const key of PANEL_ONLY_ENV) delete env[key];
+  return env;
 }
 
 function isExecutableFile(candidate) {
@@ -41,13 +56,6 @@ function isExecutableFile(candidate) {
   }
 }
 
-// Szukamy binarki `claude` sami, zamiast liczyc na to ze execvp znajdzie ja
-// w PATH. Powod: pod systemd proces dostaje minimalny PATH (bez ~/.local/bin,
-// gdzie instalator Claude Code laduje domyslnie), wiec spawn konczyl sie
-// surowym `execvp(3) failed.: No such file or directory` wypisanym wprost
-// do terminala - blad leci w rozwidlonym procesie potomnym, wiec try/catch
-// wokol pty.spawn go nie lapie. Sprawdzenie przed startem daje czytelny
-// komunikat zamiast tego.
 function resolveClaudeBin() {
   const explicit = (process.env.CLAUDE_BIN || '').trim();
   if (explicit) return isExecutableFile(explicit) ? explicit : null;
@@ -61,11 +69,29 @@ function resolveClaudeBin() {
   return candidates.find(isExecutableFile) || null;
 }
 
+const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9-]{7,63}$/;
+
+async function isKnownSessionId(sessionId) {
+  if (!SESSION_ID_RE.test(sessionId)) return false;
+  try {
+    const sessions = await listCliSessions();
+    return sessions.some((s) => s.id === sessionId);
+  } catch {
+    return false;
+  }
+}
+
 function attachCliWebSocket(wss) {
-  wss.on('connection', (ws, req) => {
+  wss.on('connection', async (ws, req) => {
     const url = new URL(req.url, 'http://localhost');
     const mode = url.searchParams.get('mode') === 'resume' ? 'resume' : 'new';
     const sessionId = url.searchParams.get('sessionId') || '';
+
+    if (mode === 'resume' && !(await isKnownSessionId(sessionId))) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Nieznane ID sesji - odswiez liste sesji' }));
+      ws.close();
+      return;
+    }
     const workspaceDir = process.env.WORKSPACE_DIR;
 
     if (!workspaceDir) {
@@ -91,7 +117,7 @@ function attachCliWebSocket(wss) {
         cols: 80,
         rows: 24,
         cwd: workspaceDir,
-        env: process.env
+        env: childEnv()
       });
     } catch (e) {
       ws.send(JSON.stringify({ type: 'error', message: `Nie udalo sie uruchomic 'claude': ${e.message}` }));
@@ -121,18 +147,14 @@ function attachCliWebSocket(wss) {
       } else if (msg.type === 'resize' && msg.cols && msg.rows) {
         try {
           shell.resize(msg.cols, msg.rows);
-        } catch {
-          // proces mogl juz sie zakonczyc - ignorujemy
-        }
+        } catch {}
       }
     });
 
     ws.on('close', () => {
       try {
         shell.kill();
-      } catch {
-        // juz nie zyje - nic do zrobienia
-      }
+      } catch {}
     });
   });
 }

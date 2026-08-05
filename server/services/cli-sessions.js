@@ -14,8 +14,6 @@ function getClaudeConfigDir() {
   return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 }
 
-// Claude Code mapuje katalog roboczy na nazwe projektu zamieniajac kazdy
-// znak nie-alfanumeryczny na "-" (udokumentowane zachowanie).
 function projectDirNameFor(workspaceDir) {
   return workspaceDir.replace(/[^a-zA-Z0-9]/g, '-');
 }

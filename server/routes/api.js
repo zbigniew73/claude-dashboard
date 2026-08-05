@@ -28,7 +28,6 @@ router.post('/workspace/init', async (req, res) => {
   }
 });
 
-// Commands / Skills / Agents - wspolny CRUD na plikach .md
 for (const type of VALID_TYPES) {
   router.get(`/${type}`, async (req, res) => {
     try {
@@ -70,8 +69,8 @@ for (const type of VALID_TYPES) {
   });
 }
 
-// Hooki - przechowywane w config.json, NIE wykonywane przez ten serwer.
-// Claude Code sam odczytuje i wykonuje hooki wg wlasnej konfiguracji - ten panel je tylko edytuje.
+const HOOK_GROUPS = ['pre-command', 'post-command', 'on-error'];
+
 router.get('/hooks', async (req, res) => {
   try {
     const config = await readConfig();
@@ -83,8 +82,18 @@ router.get('/hooks', async (req, res) => {
 
 router.put('/hooks', async (req, res) => {
   try {
+    const body = req.body || {};
+    const hooks = {};
+    for (const group of HOOK_GROUPS) {
+      const value = body[group] ?? [];
+      if (!Array.isArray(value) || value.some((v) => typeof v !== 'string')) {
+        return res.status(400).json({ error: `Grupa "${group}" musi byc tablica stringow` });
+      }
+      hooks[group] = value;
+    }
+
     const config = await readConfig();
-    config.hooks = req.body || {};
+    config.hooks = hooks;
     await writeConfig(config);
     res.json({ success: true });
   } catch (error) {
@@ -92,7 +101,6 @@ router.put('/hooks', async (req, res) => {
   }
 });
 
-// Cron - dziala na crontabie konta ktore uruchamia PROCES panelu (patrz README).
 router.get('/cron', async (req, res) => {
   try {
     res.json(await listCronJobs());
@@ -114,8 +122,6 @@ router.put('/cron', async (req, res) => {
   }
 });
 
-// Lista sesji CLI - tylko metadane plikow (ID + czas), patrz komentarz
-// w services/cli-sessions.js dlaczego nie parsujemy zawartosci.
 router.get('/cli/sessions', async (req, res) => {
   try {
     res.json(await listCliSessions());

@@ -49,10 +49,13 @@ function safeTypeDir(type) {
   return path.join(getWorkspaceRoot(), type);
 }
 
-// Blokuje path traversal - wymusza ze wynikowa sciezka zostaje w katalogu bazowym
+const SAFE_FILENAME_RE = /^(?!\.)[\p{L}\p{N}._ -]{1,100}$/u;
+
 function safeFilePath(baseDir, filename) {
-  if (!filename || /[\\/]/.test(filename) || filename.includes('..')) {
-    const err = new Error('Nieprawidlowa nazwa pliku');
+  if (!filename || !SAFE_FILENAME_RE.test(filename) || filename.includes('..')) {
+    const err = new Error(
+      'Nieprawidlowa nazwa pliku - dozwolone sa litery, cyfry, spacja oraz . _ - (max 100 znakow)'
+    );
     err.status = 400;
     throw err;
   }
@@ -80,8 +83,6 @@ async function initWorkspace() {
     );
   }
 
-  // Zasiej przykladowe zadanie przy pierwszym starcie, zeby bylo widac
-  // od razu jak wypelnic szkielet - tylko gdy folder tasks jest jeszcze pusty.
   const tasksDir = path.join(root, 'tasks');
   const existingTasks = await fs.readdir(tasksDir);
   if (existingTasks.length === 0) {

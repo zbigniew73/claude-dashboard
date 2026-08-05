@@ -15,8 +15,6 @@ function readCrontabRaw() {
     proc.stderr.on('data', (d) => (err += d));
     proc.on('error', reject);
     proc.on('close', (code) => {
-      // Brak crontabu w ogole -> crontab -l konczy sie kodem != 0 i pisze
-      // "no crontab for X" na stderr. To nie jest blad z naszej perspektywy.
       if (code !== 0 && !/no crontab/i.test(err)) {
         return reject(new Error(err.trim() || `crontab -l zakonczyl sie kodem ${code}`));
       }
@@ -54,6 +52,7 @@ function parseCrontab(raw) {
 }
 
 function validateCronLine(line) {
+  if (/[\r\n\0]/.test(line)) return false;
   return CRON_LINE_RE.test(line.trim());
 }
 

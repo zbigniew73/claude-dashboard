@@ -10,11 +10,20 @@ import {
 
 const router = Router();
 
-// Podstawowy rate-limit na probach logowania (w pamieci procesu - wystarczajace
-// dla panelu jednoosobowego/kilkuosobowego; przy restarcie serwera sie zeruje).
-const attempts = new Map(); // ip -> { count, resetAt }
+const attempts = new Map();
 const MAX_ATTEMPTS = 8;
 const WINDOW_MS = 5 * 60 * 1000;
+
+const MIN_FAILED_LOGIN_MS = 5000;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function padFailure(startedAt) {
+  const elapsed = Date.now() - startedAt;
+  if (elapsed < MIN_FAILED_LOGIN_MS) await sleep(MIN_FAILED_LOGIN_MS - elapsed);
+}
 
 function isRateLimited(ip) {
   const now = Date.now();
@@ -28,6 +37,7 @@ function isRateLimited(ip) {
 }
 
 router.post('/login', async (req, res) => {
+  const startedAt = Date.now();
   const { username, password } = req.body || {};
 
   if (getAllowedUsers().length === 0) {
@@ -40,6 +50,7 @@ router.post('/login', async (req, res) => {
 
   const ok = await authenticateSystemUser(username, password);
   if (!ok) {
+    await padFailure(startedAt);
     return res.status(401).json({ error: 'Nieprawidlowy uzytkownik lub haslo' });
   }
 
