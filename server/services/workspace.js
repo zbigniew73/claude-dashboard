@@ -74,17 +74,8 @@ async function initWorkspace() {
   for (const type of VALID_TYPES) {
     await fs.ensureDir(path.join(root, type));
   }
-  const configPath = path.join(root, 'config.json');
-  if (!(await fs.pathExists(configPath))) {
-    await fs.writeJson(
-      configPath,
-      { version: '1.0', created: new Date().toISOString(), hooks: { 'pre-command': [], 'post-command': [], 'on-error': [] } },
-      { spaces: 2 }
-    );
-  }
-
   const tasksDir = path.join(root, 'tasks');
-  const existingTasks = await fs.readdir(tasksDir);
+  const existingTasks = (await fs.readdir(tasksDir)).filter((f) => f.endsWith('.md'));
   if (existingTasks.length === 0) {
     await fs.writeFile(path.join(tasksDir, `${EXAMPLE_TASK_NAME}.md`), EXAMPLE_TASK_CONTENT, 'utf-8');
   }
@@ -136,18 +127,49 @@ async function deleteItem(type, name) {
   await fs.remove(filePath);
 }
 
-async function readConfig() {
-  const configPath = path.join(getWorkspaceRoot(), 'config.json');
-  if (!(await fs.pathExists(configPath))) {
-    return { version: '1.0', hooks: { 'pre-command': [], 'post-command': [], 'on-error': [] } };
+// Hooki czytamy z settings.json / settings.local.json, bo TAM szuka ich
+// Claude Code. Panel ich nie zapisuje - to jego zywy plik konfiguracyjny,
+// a bledny zapis popsulby uzytkownikowi codzienne srodowisko pracy.
+const SETTINGS_FILES = ['settings.json', 'settings.local.json'];
+
+async function readHooks() {
+  const root = getWorkspaceRoot();
+  const rows = [];
+
+  for (const file of SETTINGS_FILES) {
+    const filePath = path.join(root, file);
+    if (!(await fs.pathExists(filePath))) continue;
+
+    let data;
+    try {
+      data = await fs.readJson(filePath);
+    } catch {
+      rows.push({ source: file, event: null, matcher: null, command: null, unreadable: true });
+      continue;
+    }
+
+    const hooks = data && typeof data.hooks === 'object' ? data.hooks : null;
+    if (!hooks) continue;
+
+    for (const [event, entries] of Object.entries(hooks)) {
+      if (!Array.isArray(entries)) continue;
+      for (const entry of entries) {
+        const matcher = entry && typeof entry.matcher === 'string' ? entry.matcher : null;
+        const list = entry && Array.isArray(entry.hooks) ? entry.hooks : [];
+        for (const hook of list) {
+          rows.push({
+            source: file,
+            event,
+            matcher,
+            type: hook && hook.type ? String(hook.type) : null,
+            command: hook && hook.command ? String(hook.command) : ''
+          });
+        }
+      }
+    }
   }
-  return fs.readJson(configPath);
+
+  return rows;
 }
 
-async function writeConfig(config) {
-  const configPath = path.join(getWorkspaceRoot(), 'config.json');
-  await fs.ensureDir(getWorkspaceRoot());
-  await fs.writeJson(configPath, config, { spaces: 2 });
-}
-
-export { initWorkspace, listItems, readItem, writeItem, deleteItem, readConfig, writeConfig, VALID_TYPES };
+export { initWorkspace, listItems, readItem, writeItem, deleteItem, readHooks, VALID_TYPES };

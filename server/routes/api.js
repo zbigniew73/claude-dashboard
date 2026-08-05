@@ -5,11 +5,10 @@ import {
   readItem,
   writeItem,
   deleteItem,
-  readConfig,
-  writeConfig,
+  readHooks,
   VALID_TYPES
 } from '../services/workspace.js';
-import { listCronJobs, saveCronJobs } from '../services/cron.js';
+import { listCronJobs, appendCronJob } from '../services/cron.js';
 import { listCliSessions } from '../services/cli-sessions.js';
 
 const router = Router();
@@ -69,33 +68,9 @@ for (const type of VALID_TYPES) {
   });
 }
 
-const HOOK_GROUPS = ['pre-command', 'post-command', 'on-error'];
-
 router.get('/hooks', async (req, res) => {
   try {
-    const config = await readConfig();
-    res.json(config.hooks || { 'pre-command': [], 'post-command': [], 'on-error': [] });
-  } catch (error) {
-    handleError(res, error);
-  }
-});
-
-router.put('/hooks', async (req, res) => {
-  try {
-    const body = req.body || {};
-    const hooks = {};
-    for (const group of HOOK_GROUPS) {
-      const value = body[group] ?? [];
-      if (!Array.isArray(value) || value.some((v) => typeof v !== 'string')) {
-        return res.status(400).json({ error: `Grupa "${group}" musi byc tablica stringow` });
-      }
-      hooks[group] = value;
-    }
-
-    const config = await readConfig();
-    config.hooks = hooks;
-    await writeConfig(config);
-    res.json({ success: true });
+    res.json(await readHooks());
   } catch (error) {
     handleError(res, error);
   }
@@ -109,13 +84,13 @@ router.get('/cron', async (req, res) => {
   }
 });
 
-router.put('/cron', async (req, res) => {
+router.post('/cron', async (req, res) => {
   try {
-    const { lines } = req.body || {};
-    if (!Array.isArray(lines)) {
-      return res.status(400).json({ error: 'Pole lines (tablica stringow) jest wymagane' });
+    const { line } = req.body || {};
+    if (typeof line !== 'string' || !line.trim()) {
+      return res.status(400).json({ error: 'Pole line (niepusty string) jest wymagane' });
     }
-    await saveCronJobs(lines);
+    await appendCronJob(line);
     res.json({ success: true });
   } catch (error) {
     handleError(res, error);

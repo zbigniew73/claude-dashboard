@@ -210,119 +210,81 @@ return String(str ?? '').replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch]);
 }
 
 async function renderHooks() {
-const hooks = await api('GET', '/hooks');
-const el = document.getElementById('hooks-editor');
-const groups = ['pre-command', 'post-command', 'on-error'];
-const labelKeys = { 'pre-command': 'hooks.pre_command', 'post-command': 'hooks.post_command', 'on-error': 'hooks.on_error' };
+const rows = await api("GET", "/hooks");
+const el = document.getElementById("hooks-editor");
 
-el.innerHTML = groups
-  .map(
-    (g) => `
-  <div class="hook-group" data-group="${g}">
-    <h3>${t(labelKeys[g])}</h3>
-    <div class="hook-rows"></div>
-    <button class="secondary add-hook-btn" data-group="${g}">${t('hooks.add')}</button>
-  </div>`
-  )
-  .join('') + `<button id="save-hooks-btn">${t('hooks.save')}</button>`;
-
-groups.forEach((g) => renderHookRows(g, hooks[g] || []));
-
-el.querySelectorAll('.add-hook-btn').forEach((btn) => {
-  btn.onclick = () => {
-    const g = btn.dataset.group;
-    const rows = getHookValues(g);
-    rows.push('');
-    renderHookRows(g, rows);
-  };
-});
-
-document.getElementById('save-hooks-btn').onclick = async () => {
-  const payload = {};
-  groups.forEach((g) => (payload[g] = getHookValues(g).filter((v) => v.trim())));
-  await api('PUT', '/hooks', payload);
-  alert(t('hooks.saved'));
-};
+if (!rows.length) {
+  el.innerHTML = `<div class="hooks-note" data-i18n="hooks.help"></div><div class="hooks-empty" data-i18n="hooks.empty"></div><div class="hooks-note" data-i18n="hooks.readonly_note"></div>`;
+  applyTranslations();
+  return;
 }
 
-function renderHookRows(group, values) {
-const container = document.querySelector(`.hook-group[data-group="${group}"] .hook-rows`);
-container.innerHTML = values
-  .map(
-    (v, i) => `
-  <div class="hook-row">
-    <input type="text" value="${escapeHtml(v)}" data-idx="${i}">
-    <button class="danger remove-hook-btn" data-idx="${i}">x</button>
-  </div>`
-  )
-  .join('');
-container.querySelectorAll('.remove-hook-btn').forEach((btn) => {
-  btn.onclick = () => {
-    const idx = parseInt(btn.dataset.idx, 10);
-    const rows = getHookValues(group);
-    rows.splice(idx, 1);
-    renderHookRows(group, rows);
-  };
-});
-}
+const body = rows
+  .map((r) => {
+    if (r.unreadable) {
+      return `<div class="hook-card hook-broken"><code>${escapeHtml(r.source)}</code> <span data-i18n="hooks.unreadable"></span></div>`;
+    }
+    const matcher = r.matcher
+      ? `<span class="hook-matcher">${escapeHtml(r.matcher)}</span>`
+      : `<span class="hook-matcher hook-any" data-i18n="hooks.any_tool"></span>`;
+    return `<div class="hook-card">
+      <div class="hook-head"><span class="hook-event">${escapeHtml(r.event)}</span>${matcher}<span class="hook-source">${escapeHtml(r.source)}</span></div>
+      <code class="hook-cmd">${escapeHtml(r.command)}</code>
+    </div>`;
+  })
+  .join("");
 
-function getHookValues(group) {
-const inputs = document.querySelectorAll(`.hook-group[data-group="${group}"] input`);
-return Array.from(inputs).map((i) => i.value);
+el.innerHTML = `<div class="hooks-note" data-i18n="hooks.help"></div>${body}<div class="hooks-note" data-i18n="hooks.readonly_note"></div>`;
+applyTranslations();
 }
 
 async function renderCron() {
-const jobs = await api('GET', '/cron');
 const el = document.getElementById('cron-editor');
 el.innerHTML = `
   <div class="cron-help" data-i18n="cron.help"></div>
   <div id="cron-rows"></div>
-  <div style="display:flex;gap:8px;margin-top:10px;">
-    <button class="secondary" id="add-cron-btn" data-i18n="cron.add"></button>
-    <button id="save-cron-btn" data-i18n="cron.save"></button>
+  <div class="cron-add">
+    <input type="text" id="cron-new-line" data-i18n-placeholder="cron.line_placeholder">
+    <button id="add-cron-btn" data-i18n="cron.add"></button>
   </div>
+  <div class="cron-note" data-i18n="cron.readonly_note"></div>
 `;
 applyTranslations();
-renderCronRows(jobs.map((j) => j.raw));
+await loadCronRows();
 
-document.getElementById('add-cron-btn').onclick = () => {
-  renderCronRows([...getCronValues(), '']);
-};
-document.getElementById('save-cron-btn').onclick = async () => {
+const input = document.getElementById('cron-new-line');
+const submit = async () => {
+  const line = input.value.trim();
+  if (!line) return;
   try {
-    await api('PUT', '/cron', { lines: getCronValues() });
-    alert(t('hooks.saved'));
+    await api('POST', '/cron', { line });
+    input.value = '';
+    await loadCronRows();
   } catch (e) {
     alert(t('error.prefix') + e.message);
   }
 };
+document.getElementById('add-cron-btn').onclick = submit;
+input.onkeydown = (e) => {
+  if (e.key === 'Enter') submit();
+};
 }
 
-function renderCronRows(values) {
+async function loadCronRows() {
+const lines = await api('GET', '/cron');
 const container = document.getElementById('cron-rows');
-container.innerHTML = values
-  .map(
-    (v, i) => `
-  <div class="cron-row">
-    <input type="text" value="${escapeHtml(v)}" data-idx="${i}" data-i18n-placeholder="cron.line_placeholder">
-    <button class="danger remove-cron-btn" data-idx="${i}">x</button>
-  </div>`
-  )
-  .join('');
-applyTranslations();
-container.querySelectorAll('.remove-cron-btn').forEach((btn) => {
-  btn.onclick = () => {
-    const idx = parseInt(btn.dataset.idx, 10);
-    const rows = getCronValues();
-    rows.splice(idx, 1);
-    renderCronRows(rows);
-  };
-});
+if (!lines.length) {
+  container.innerHTML = `<div class="cron-empty" data-i18n="cron.empty"></div>`;
+  applyTranslations();
+  return;
 }
-
-function getCronValues() {
-const inputs = document.querySelectorAll('#cron-rows input');
-return Array.from(inputs).map((i) => i.value);
+container.innerHTML = lines
+  .map((l) => {
+    const cls = l.kind === 'comment' && l.paused ? 'paused' : l.kind;
+    const num = String(l.id + 1).padStart(2, ' ');
+    return `<div class="cron-line cron-${cls}"><span class="cron-num">${num}</span><code>${escapeHtml(l.raw) || '&nbsp;'}</code></div>`;
+  })
+  .join('');
 }
 
 let cliSocket = null;

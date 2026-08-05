@@ -3,8 +3,15 @@ import { spawn } from 'child_process';
 // Operujemy na crontabie konta, na ktorym dziala PROCES panelu (nie
 // koniecznie tego samego, ktorym ktos sie zalogowal przez PAM - to dwie
 // oddzielne tozsamosci). Patrz README, sekcja o Cron.
+//
+// Panel NIE przepisuje crontaba. Odczyt pokazuje kazda linie bez wyjatku,
+// a zapis wylacznie dopisuje na koncu - istniejaca tresc plynie dalej
+// bajt w bajt i zaden kod nie jest w stanie jej zmienic ani skasowac.
 
-const CRON_LINE_RE = /^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)$/;
+const FIELD = '(?:[0-9*][0-9*/,-]*|[A-Za-z]{3}(?:-[A-Za-z]{3})?)';
+const CRON_LINE_RE = new RegExp(`^(${FIELD})\\s+(${FIELD})\\s+(${FIELD})\\s+(${FIELD})\\s+(${FIELD})\\s+(.+)$`);
+const SPECIAL_LINE_RE = /^(@reboot|@yearly|@annually|@monthly|@weekly|@daily|@midnight|@hourly)\s+(.+)$/;
+const ENV_LINE_RE = /^[A-Za-z_][A-Za-z0-9_]*\s*=/;
 
 function readCrontabRaw() {
   return new Promise((resolve, reject) => {
@@ -38,22 +45,37 @@ function writeCrontabRaw(content) {
   });
 }
 
+function classifyLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed) return { kind: 'blank' };
+  if (trimmed.startsWith('#')) {
+    const inner = trimmed.slice(1).trim();
+    const paused = CRON_LINE_RE.test(inner) || SPECIAL_LINE_RE.test(inner);
+    return { kind: 'comment', paused };
+  }
+  if (ENV_LINE_RE.test(trimmed)) return { kind: 'env' };
+
+  const special = trimmed.match(SPECIAL_LINE_RE);
+  if (special) return { kind: 'job', schedule: special[1], command: special[2] };
+
+  const m = trimmed.match(CRON_LINE_RE);
+  if (m) {
+    const [, minute, hour, dom, month, dow, command] = m;
+    return { kind: 'job', schedule: `${minute} ${hour} ${dom} ${month} ${dow}`, minute, hour, dom, month, dow, command };
+  }
+  return { kind: 'unknown' };
+}
+
 function parseCrontab(raw) {
-  return raw
-    .split('\n')
-    .map((line) => line.replace(/\r$/, ''))
-    .filter((line) => line.trim() && !line.trim().startsWith('#'))
-    .map((line, id) => {
-      const m = line.match(CRON_LINE_RE);
-      if (!m) return { id, raw: line, valid: false };
-      const [, minute, hour, dom, month, dow, command] = m;
-      return { id, raw: line, valid: true, minute, hour, dom, month, dow, command };
-    });
+  const lines = raw.split('\n').map((line) => line.replace(/\r$/, ''));
+  if (lines.length && lines[lines.length - 1] === '') lines.pop();
+  return lines.map((line, id) => ({ id, raw: line, ...classifyLine(line) }));
 }
 
 function validateCronLine(line) {
   if (/[\r\n\0]/.test(line)) return false;
-  return CRON_LINE_RE.test(line.trim());
+  const trimmed = line.trim();
+  return CRON_LINE_RE.test(trimmed) || SPECIAL_LINE_RE.test(trimmed);
 }
 
 async function listCronJobs() {
@@ -61,17 +83,19 @@ async function listCronJobs() {
   return parseCrontab(raw);
 }
 
-async function saveCronJobs(lines) {
-  const cleaned = lines.map((l) => l.trim()).filter(Boolean);
-  for (const line of cleaned) {
-    if (!validateCronLine(line)) {
-      const err = new Error(`Nieprawidlowa linia crontab (oczekiwano: minuta godzina dzien miesiac dzien-tyg komenda): "${line}"`);
-      err.status = 400;
-      throw err;
-    }
+async function appendCronJob(line) {
+  if (typeof line !== 'string' || !validateCronLine(line)) {
+    const err = new Error(
+      'Nieprawidlowa linia crontab. Oczekiwano "minuta godzina dzien miesiac dzien-tygodnia komenda" ' +
+        'albo skrotu (@reboot, @daily, @hourly, @weekly, @monthly, @yearly).'
+    );
+    err.status = 400;
+    throw err;
   }
-  const content = cleaned.length ? cleaned.join('\n') + '\n' : '';
-  await writeCrontabRaw(content);
+
+  const existing = await readCrontabRaw();
+  const separator = existing === '' || existing.endsWith('\n') ? '' : '\n';
+  await writeCrontabRaw(`${existing}${separator}${line.trim()}\n`);
 }
 
-export { listCronJobs, saveCronJobs, validateCronLine };
+export { listCronJobs, appendCronJob, validateCronLine, parseCrontab };
