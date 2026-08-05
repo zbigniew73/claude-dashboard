@@ -47,7 +47,7 @@ to whitelist: tylko wymienione tam konta mogą się zalogować, nawet jeśli inn
 konto systemowe ma poprawne hasło.
 
 ```
-AUTH_USERS=zibi,ania
+AUTH_USERS=adam,ania
 ```
 
 **Wymóg systemowy — grupa `shadow`:** PAM (a dokładnie pomocniczy program
@@ -113,7 +113,7 @@ cp .env.example .env
 Edytuj `.env` — **koniecznie zmień `HOST` na swój prawdziwy adres LAN**
 (sprawdzisz przez `ip addr` albo `hostname -I` na serwerze):
 ```
-WORKSPACE_DIR=/sciezka/do/twojego/projektu
+WORKSPACE_DIR=/home/adam  ( wskazuje na /home/adam/.claude )  
 EXPOSURE=lan
 HOST=192.168.1.100
 PORT=4200
@@ -144,7 +144,7 @@ zgodnie z Twoim obecnym stackiem (Caddy + LiteCP na AlmaLinux 9).
    AUTH_USERS=twoj-login-systemowy
    SESSION_SECRET=<openssl rand -hex 32>
    ```
-2. Dodaj wpis w Caddy (przykład — dostosuj do swojej konfiguracji w LiteCP),
+2. Dodaj wpis w Caddy (przykład — dostosuj do swojej konfiguracji),
    podmieniając subdomenę na docelową:
    ```
    panel.twojadomena.pl {
@@ -208,26 +208,9 @@ web/
   i18n/{pl,en,de,es}.json
 ```
 
-## Czym się różni od claudex (na którym się wzorowałem)
-
-Analizowałem `github.com/tct68/claudex` jako punkt wyjścia — sam pomysł UI
-do zarządzania `.claude/` jest dobry, ale kod miał realne dziury, które tu
-świadomie zamknąłem:
-
-| Problem w claudex | Rozwiązanie tutaj |
-|---|---|
-| `app.listen(port)` bez hosta → domyślnie `0.0.0.0`, wszystkie interfejsy | `HOST` jawnie wymagany, domyślnie `127.0.0.1`; start z hostem zdalnym bez logowania jest **blokowany** |
-| `cors()` bez ograniczeń — dowolna strona mogła odpytywać lokalne API | `ALLOWED_ORIGIN` wymagany w trybie zdalnym, brak wildcardów |
-| Zero autoryzacji na jakimkolwiek endpoincie | Logowanie systemowe PAM + sesje HMAC, wymuszane middleware'em `requireAuth` (i osobno na WebSocket upgrade) |
-| `spawn('claude', ...)` wywoływany z treścią z **dowolnego, nieautoryzowanego** żądania HTTP (endpoint `/test-command`) — przy otwartym CORS to zdalne uruchomienie Claude Code przez złośliwą stronę bez logowania | Ten panel też uruchamia `claude` (zakładka CLI), ale tylko po zalogowaniu kontem z whitelisty `AUTH_USERS`, przez osobno autoryzowany WebSocket, z parametrami ograniczonymi do trybu nowej sesji albo `--resume <id>` z listy — nie z dowolnej treści żądania |
-| Walidacja ścieżek przez `startsWith` na `path.join` | Dodatkowa jawna blokada `..`, `/`, `\` w nazwie pliku przed budową ścieżki |
-
 ## Co dalej / rozbudowa
 
 To jest świadomie okrojony szkielet — masz teraz solidny, bezpieczny fundament,
 który możesz rozbudowywać razem z Claude Code:
 - import/export workspace (JSON) — łatwo dodać, wzorując się na strukturze `writeConfig`/`readConfig`
-- podgląd szablonów z `claudex` (te 47 komend / 81 skilli / 16 agentów) jako
-  biblioteka do wyboru przy tworzeniu nowego pliku — bezpieczne, bo to tylko
-  odczyt statycznych plików `.md`, bez wykonywania kodu
 - panel wielu workspace'ów naraz (obecnie jeden `WORKSPACE_DIR` na instancję)
