@@ -1,0 +1,37 @@
+# Szablon jednostki systemd. Skopiuj, podmien sciezki i uzytkownika, potem:
+#
+#   sudo cp claude-dashboard.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now claude-dashboard
+#
+# Plik z podmienionymi wartosciami jest w .gitignore - trzymaj go lokalnie.
+
+[Unit]
+Description=Claude Dashboard
+After=network.target
+
+[Service]
+Type=simple
+
+# Katalog, do ktorego sklonowales repo.
+WorkingDirectory=/sciezka/do/claude-dashboard
+EnvironmentFile=/sciezka/do/claude-dashboard/.env
+
+ExecStart=/usr/bin/node server/index.js
+Restart=on-failure
+
+# Konto, na ktorym dziala panel. UWAGA: kazdy uzytkownik z AUTH_USERS dostaje
+# przez zakladki Cron/CLI/Hooki wykonanie polecen na TYM koncie - patrz README,
+# sekcja "Logowanie systemowe (PAM)". Uzyj konta o minimalnych uprawnieniach.
+User=twoj-user
+
+# Odkomentuj TYLKO jesli AUTH_USERS zawiera konto inne niz powyzsze - bez tego
+# PAM pozwoli zweryfikowac wylacznie haslo wlasnego uzytkownika procesu.
+# Konsekwencja: dajesz wszystkim z AUTH_USERS mozliwosc odczytu /etc/shadow.
+# SupplementaryGroups=shadow
+
+# NIE dodawaj NoNewPrivileges=true - blokuje setuid, przez co pomocniczy
+# unix_chkpwd nie moze sprawdzic hasla i logowanie przestaje dzialac calkowicie.
+
+[Install]
+WantedBy=multi-user.target

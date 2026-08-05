@@ -208,29 +208,25 @@ autoryzacja jest sprawdzana na poziomie HTTP przed dokończeniem handshake.
 
 ## Uruchomienie jako usługa systemd
 
-Jeśli chcesz logować konta inne niż to, na którym działa usługa, dodaj
-`SupplementaryGroups=shadow` (patrz sekcja "Logowanie systemowe (PAM)" wyżej).
-
-```ini
-# /etc/systemd/system/claude-dashboard.service
-[Unit]
-Description=Claude Dashboard
-After=network.target
-
-[Service]
-Type=simple
-WorkingDirectory=/opt/claude-dashboard
-EnvironmentFile=/opt/claude-dashboard/.env
-ExecStart=/usr/bin/node server/index.js
-Restart=on-failure
-User=twoj-user
-SupplementaryGroups=shadow
-
-[Install]
-WantedBy=multi-user.target
-```
+W repo jest gotowy szablon `claude-dashboard.service.example`. Skopiuj go,
+podmień ścieżki i nazwę konta:
 
 ```bash
+cp claude-dashboard.service.example claude-dashboard.service
+```
+
+Twoja kopia (bez `.example`) jest w `.gitignore`, więc lokalne ścieżki nie
+trafią do repo. Szablon zawiera dwie uwagi, które warto przeczytać przed
+uruchomieniem: kiedy naprawdę potrzebujesz `SupplementaryGroups=shadow` (i co
+tym oddajesz — patrz sekcja "Logowanie systemowe (PAM)" wyżej) oraz dlaczego
+**nie** wolno dodać `NoNewPrivileges=true` (blokuje setuid, przez co PAM nie
+może sprawdzić hasła i logowanie przestaje działać).
+
+Potem:
+
+```bash
+sudo cp claude-dashboard.service /etc/systemd/system/
+sudo systemctl daemon-reload
 sudo systemctl enable --now claude-dashboard
 ```
 
