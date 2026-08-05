@@ -1,0 +1,23 @@
+{
+  "name": "claude-dashboard",
+  "version": "1.0.0",
+  "description": "Panel do zarzadzania workspace Claude Code (.claude/) - komendy, skille, hooki, agenci.",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "fs-extra": "^11.2.0",
+    "cookie-parser": "^1.4.6",
+    "authenticate-pam": "^1.0.5",
+    "node-pty": "^1.0.0",
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
